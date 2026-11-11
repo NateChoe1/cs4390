@@ -107,7 +107,7 @@ func (t *Tracker) marshal() []byte {
 	fmt.Fprintf(&b, "Filesize: %d\n", t.Size)
 	fmt.Fprintf(&b, "Description: %s\n", t.Desc)
 	fmt.Fprintf(&b, "MD5: %s\n", t.MD5)
-	b.WriteString("#list of peers follows next\n")
+	b.WriteString("# list of peers follows next\n")
 	for _, p := range t.Peers {
 		fmt.Fprintf(&b, "%s:%d:%d:%d:%d\n", p.IP, p.Port, p.Start, p.End, p.Stamp)
 	}

@@ -6,48 +6,66 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"net"
 )
 
-// create a struct to contain all the settings of the server (read from the config file serverThreadConfig)
-type ServerConfig struct {
-	Port         int // since this is a capital letter, it is exported and can be used by other packaged (i.e., main)
-	SharedFolder string
+type PeerConfig struct {
+	Port             int
+	SharedFolder     string
+	TrackerAddress   string
+	Files            []string
+	MyIP             net.IP
 }
 
 // read the settings file (check for any errors as well)
-func LoadServerConfig(filename string /*params*/) (ServerConfig, error /*returns*/) {
+func LoadConfig(filename string) (PeerConfig, error) {
+	// read file
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return ServerConfig{}, err
+		return PeerConfig{}, err
 	}
 
-	// convert the data from the config file into a string and split it (on the \n) to create a slice (an array) of strings
+	// split into lines
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 
-	// check if the correct number of lines are present (need 2)
-	if len(lines) != 2 {
-		return ServerConfig{}, fmt.Errorf("config must have exactly 2 lines")
+	// check if the correct number of lines are present (need at least 2)
+	if len(lines) < 3 {
+		return PeerConfig{}, fmt.Errorf("config must have at least 3 lines")
 	}
 
-	// convert the port string from the config file to an integer
+	// get port
 	port, err := strconv.Atoi(strings.TrimSpace(lines[0]))
-
-	// check if the port number is within th ecorrect range and Atoi did not fail
 	if err != nil || port < 1 || port > 65535 {
-		return ServerConfig{}, fmt.Errorf("port number must be between 1 and 65535")
+		return PeerConfig{}, fmt.Errorf("port number must be between 1 and 65535")
 	}
 
-	// get the folder name
+	// get folder name
 	folder := strings.TrimSpace(lines[1])
-
-	// check if the folder name is empty
 	if folder == "" {
-		return ServerConfig{}, fmt.Errorf("shared folder must have a name")
+		return PeerConfig{}, fmt.Errorf("shared folder must have a name")
 	}
 
-	// return with no errors and correct port/folder name
-	return ServerConfig{
-		Port:         port,
-		SharedFolder: folder,
+	// get tracker address
+	trackerAddress := strings.TrimSpace(lines[2])
+	if trackerAddress == "" {
+		return PeerConfig{}, fmt.Errorf("tracker address must not be empty")
+	}
+
+	/* https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
+	 *
+	 * this doesn't actually send any packets, it's just used to get the
+	 * local address
+	 */
+	conn, err := net.Dial("udp", "1.1.1.1:53")
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	defer conn.Close()
+
+	// everything after line 2 is a file to receive/share as a peer
+	return PeerConfig{
+		Port:           port,
+		SharedFolder:   folder,
+		TrackerAddress: trackerAddress,
+		Files:          lines[2:],
+		MyIP:           localAddr.IP,
 	}, nil
 }

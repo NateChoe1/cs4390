@@ -2,6 +2,7 @@
 package peer
 
 import (
+	"log"
 	"bufio"
 	"fmt"
 	"io"
@@ -9,7 +10,127 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync"
+	"os"
+	"crypto/md5"
+	"encoding/hex"
 )
+
+func StartClient(config PeerConfig) error {
+	var wg sync.WaitGroup
+
+	root, err := os.OpenRoot(config.SharedFolder)
+
+	if err != nil {
+		return err
+	}
+
+	for _, file := range(config.Files) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := peerFile(config, file, root); err != nil {
+				log.Fatal(err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	return nil
+}
+
+func peerFile(config PeerConfig, file string, root *os.Root) error {
+	var start, end, flen int64
+
+	if stat, err := root.Stat(file); err != nil {
+		// the file does not exist, i.e. we don't have it
+		start = 0
+		end = 0
+	} else {
+		// the file does exist and we have the full thing
+		start = 0
+		end = stat.Size()
+		flen = end
+		makeTracker(config.TrackerAddress, file, root, config)
+	}
+
+	fmt.Println(start)
+	fmt.Println(flen)
+
+	for {
+	}
+	return nil
+}
+
+func makeTracker(tracker string, file string, root *os.Root, config PeerConfig) error {
+	hasher := md5.New()
+	reader, err := root.Open(file)
+
+	if err != nil {
+		return err
+	}
+
+	var sum []byte
+	size := 0
+
+	for {
+		buf := make([]byte, 1024)
+		n, err := reader.Read(buf)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		sum = hasher.Sum(buf[:n])
+		size += n
+		if err == io.EOF {
+			break
+		}
+	}
+
+	marshaledSum := hex.EncodeToString(sum)
+
+	_, err = request(tracker, []string{"CREATETRACKER", string(size),
+		marshaledSum, config.MyIP.String(), string(config.Port)})
+
+	return err
+}
+
+func request(tracker string, request []string) ([][]string, error) {
+	conn, err := net.DialTimeout("tcp", tracker, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = fmt.Fprintf(conn, "<%s>\n", strings.Join(request, " "))
+	if err != nil {
+		return nil, err
+	}
+
+	reader := bufio.NewReader(conn)
+	ret := make([][]string, 0)
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			return ret, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return ret, nil
+		}
+
+		if !strings.HasPrefix(line, "<") || !strings.HasSuffix(line, ">") {
+			return nil, fmt.Errorf("Received line from tracker server does not have correct format")
+		}
+
+		fields := strings.Fields(line[1 : len(line)-1])
+		ret = append(ret, fields)
+	}
+
+	return nil, nil
+}
 
 // requests bytes in the format [start, end) from another peer
 func DownloadChunk(address string, filename string, start int64, end int64) ([]byte, error) {

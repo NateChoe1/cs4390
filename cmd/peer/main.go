@@ -4,10 +4,19 @@ import (
 	"cs4390/peer"
 	"fmt"
 	"log"
+	"os"
+	"sync"
 )
 
 func main() {
-	config, err := peer.LoadServerConfig("serverThreadConfig.cfg")
+	// default config, can be set with a command line arg
+	configPath := "peerconfig"
+
+	if len(os.Args) > 1 {
+		configPath = os.Args[1]
+	}
+
+	config, err := peer.LoadConfig(configPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -15,7 +24,23 @@ func main() {
 	fmt.Println("Port: ", config.Port)
 	fmt.Println("Shared Folder: ", config.SharedFolder)
 
-	if err := peer.StartServer(config); err != nil {
-		log.Fatal(err)
-	}
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := peer.StartServer(config); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := peer.StartClient(config); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	wg.Wait()
 }
