@@ -254,7 +254,6 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	fmt.Println(f)
 	switch cmd := strings.ToLower(f[0]); {
 	case cmd == "req" && len(f) >= 2 && strings.EqualFold(f[1], "list"), cmd == "list":
 		s.handleList(conn)

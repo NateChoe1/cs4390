@@ -57,7 +57,7 @@ func peerFile(config PeerConfig, file string, root *os.Root) error {
 		log.Fatal(err)
 	}
 
-	writer, err := root.OpenFile(file, os.O_WRONLY | os.O_CREATE, 0)
+	writer, err := root.OpenFile(file, os.O_WRONLY | os.O_CREATE, 0o644)
 	if err != nil {
 		log.Fatal(err)
 	}
