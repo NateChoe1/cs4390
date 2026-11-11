@@ -2,6 +2,7 @@
 package peer
 
 import (
+	"log"
 	"bufio"
 	"fmt"
 	"io"
@@ -9,7 +10,225 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync"
+	"os"
+	"crypto/md5"
+	"encoding/hex"
+	"cs4390/tracker"
+	"math/rand"
 )
+
+func StartClient(config PeerConfig) error {
+	var wg sync.WaitGroup
+
+	root, err := os.OpenRoot(config.SharedFolder)
+
+	if err != nil {
+		return err
+	}
+
+	for _, file := range(config.Files) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := peerFile(config, file, root); err != nil {
+				log.Fatal(err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	return nil
+}
+
+func peerFile(config PeerConfig, file string, root *os.Root) error {
+	if stat, err := root.Stat(file); err == nil {
+		// the file does exist and we have the full thing. create the
+		// tracker, update the tracker file, exit
+		makeTracker(config.TrackerAddress, file, root, config)
+		updateTracker(config, file, 0, stat.Size())
+
+		return nil
+	}
+
+	trackerFile, err := getTracker(config.TrackerAddress, file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	writer, err := root.OpenFile(file, os.O_WRONLY | os.O_CREATE, 0o644)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// the file does not exist, i.e. we don't have it
+	flen := trackerFile.Size
+	numBlocks := (flen + 1023) / 1024
+	startBlock := rand.Int63n(numBlocks)
+
+	writer.Truncate(flen)
+
+	// start=end, i.e. we don't have any data. we start at some
+	// random block-aligned location so that different nodes get
+	// different sections of the file
+	start := startBlock * 1024
+	end := startBlock * 1024
+	updateTracker(config, file, start, end)
+
+	// update tracker every 5 seconds
+	go func() {
+		time.Sleep(5 * time.Second)
+		trackerFile, err = getTracker(config.TrackerAddress, file)
+		if err != nil {
+			panic(err)
+		}
+	}()
+
+	for {
+		if start <= 0 && end >= flen {
+			return nil
+		}
+
+		var blockStart, blockEnd int64
+		forwards := rand.Int() % 2 == 0
+
+		if start == 0 {
+			forwards = true
+		} else if end == flen {
+			forwards = false
+		}
+		if forwards {
+			blockStart = end
+			blockEnd = min(end+1024, flen)
+		} else {
+			blockStart = start - 1024
+			blockEnd = start
+		}
+
+		peersWithChunk := make([]string, 0)
+		for _, peer := range(trackerFile.Peers) {
+			if peer.Start <= blockStart && peer.End >= blockEnd {
+				peersWithChunk = append(peersWithChunk, fmt.Sprintf("%s:%d", peer.IP, peer.Port))
+			}
+		}
+
+		chosenPeer := rand.Intn(len(peersWithChunk))
+
+		data, err := DownloadChunk(peersWithChunk[chosenPeer], file, blockStart, blockEnd)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+
+		n, err := writer.WriteAt(data, blockStart)
+		if n < len(data) {
+			fmt.Println("Short write")
+			continue
+		}
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+
+		start = min(start, blockStart)
+		end = max(end, blockEnd)
+
+		updateTracker(config, file, start, end)
+	}
+}
+
+func getTracker(trackerAddr string, file string) (*tracker.Tracker, error) {
+	data, err := request(trackerAddr, []string{"GET", file})
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println(data)
+	if strings.ToLower(data[0]) != "<rep get begin>" {
+		return nil, fmt.Errorf("GET returned wrong header")
+	}
+
+	lastLine := strings.ToLower(data[len(data)-1])
+	if !strings.HasPrefix(lastLine, "<rep get end") || !strings.HasSuffix(lastLine, ">") {
+		return nil, fmt.Errorf("GET returned wrong footer")
+	}
+
+	data = data[1:len(data)-1]
+	rawFile := strings.Join(data, "\n")
+
+	return tracker.ParseTracker(rawFile)
+}
+
+func makeTracker(tracker string, file string, root *os.Root, config PeerConfig) error {
+	hasher := md5.New()
+	reader, err := root.Open(file)
+
+	if err != nil {
+		return err
+	}
+
+	var sum []byte
+	size := 0
+
+	for {
+		buf := make([]byte, 1024)
+		n, err := reader.Read(buf)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		sum = hasher.Sum(buf[:n])
+		size += n
+		if err == io.EOF {
+			break
+		}
+	}
+
+	marshaledSum := hex.EncodeToString(sum)
+
+	_, err = request(tracker, []string{"CREATETRACKER", file, strconv.Itoa(size),
+		marshaledSum, config.MyIP.String(), strconv.Itoa(config.Port)})
+
+	return err
+}
+
+func updateTracker(config PeerConfig, file string, start, end int64) {
+	request(config.TrackerAddress, []string{"UPDATETRACKER", file,
+			strconv.FormatInt(start, 10), strconv.FormatInt(end, 10),
+			config.MyIP.String(), strconv.Itoa(config.Port)})
+}
+
+func request(tracker string, request []string) ([]string, error) {
+	conn, err := net.DialTimeout("tcp", tracker, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = fmt.Fprintf(conn, "<%s>\n", strings.Join(request, " "))
+	if err != nil {
+		return nil, err
+	}
+
+	reader := bufio.NewReader(conn)
+	ret := make([]string, 0)
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			return ret, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return ret, nil
+		}
+
+		ret = append(ret, line)
+	}
+
+	return nil, nil
+}
 
 // requests bytes in the format [start, end) from another peer
 func DownloadChunk(address string, filename string, start int64, end int64) ([]byte, error) {

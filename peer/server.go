@@ -12,7 +12,7 @@ import (
 )
 
 // listen for connections from other peers
-func StartServer(config ServerConfig) error {
+func StartServer(config PeerConfig) error {
 	// create a listening address (defined which IP address and port this application binds to)
 	address := net.JoinHostPort("", strconv.Itoa(config.Port))
 

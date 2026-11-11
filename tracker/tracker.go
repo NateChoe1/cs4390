@@ -107,15 +107,15 @@ func (t *Tracker) marshal() []byte {
 	fmt.Fprintf(&b, "Filesize: %d\n", t.Size)
 	fmt.Fprintf(&b, "Description: %s\n", t.Desc)
 	fmt.Fprintf(&b, "MD5: %s\n", t.MD5)
-	b.WriteString("#list of peers follows next\n")
+	b.WriteString("# list of peers follows next\n")
 	for _, p := range t.Peers {
 		fmt.Fprintf(&b, "%s:%d:%d:%d:%d\n", p.IP, p.Port, p.Start, p.End, p.Stamp)
 	}
 	return []byte(b.String())
 }
 
-// parseTracker parses .track file content. Lines starting with # are comments.
-func parseTracker(data string) (*Tracker, error) {
+// ParseTracker parses .track file content. Lines starting with # are comments.
+func ParseTracker(data string) (*Tracker, error) {
 	t := &Tracker{}
 	sawName, sawSize, sawMD5 := false, false, false
 	for _, line := range strings.Split(data, "\n") {
@@ -216,7 +216,7 @@ func (s *Server) load(name string) (*Tracker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseTracker(string(data))
+	return ParseTracker(string(data))
 }
 
 // save writes the tracker atomically (temp file + rename) so readers never

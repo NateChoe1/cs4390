@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "sconfig", "path to the tracker config file")
+	cfgPath := flag.String("config", "serverconfig", "path to the tracker config file")
 	keep := flag.Bool("keep", false, "keep existing .track files at start (default: delete them)")
 	flag.Parse()
 
