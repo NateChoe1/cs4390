@@ -114,8 +114,8 @@ func (t *Tracker) marshal() []byte {
 	return []byte(b.String())
 }
 
-// parseTracker parses .track file content. Lines starting with # are comments.
-func parseTracker(data string) (*Tracker, error) {
+// ParseTracker parses .track file content. Lines starting with # are comments.
+func ParseTracker(data string) (*Tracker, error) {
 	t := &Tracker{}
 	sawName, sawSize, sawMD5 := false, false, false
 	for _, line := range strings.Split(data, "\n") {
@@ -216,7 +216,7 @@ func (s *Server) load(name string) (*Tracker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseTracker(string(data))
+	return ParseTracker(string(data))
 }
 
 // save writes the tracker atomically (temp file + rename) so readers never
@@ -254,6 +254,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
+	fmt.Println(f)
 	switch cmd := strings.ToLower(f[0]); {
 	case cmd == "req" && len(f) >= 2 && strings.EqualFold(f[1], "list"), cmd == "list":
 		s.handleList(conn)

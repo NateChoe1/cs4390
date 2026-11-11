@@ -60,12 +60,21 @@ func LoadConfig(filename string) (PeerConfig, error) {
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	defer conn.Close()
 
+	files := make([]string, 0)
+	for i := 3; i < len(lines); i += 1 {
+		file := strings.TrimSpace(lines[i])
+		if file == "" {
+			continue
+		}
+		files = append(files, file)
+	}
+
 	// everything after line 2 is a file to receive/share as a peer
 	return PeerConfig{
 		Port:           port,
 		SharedFolder:   folder,
 		TrackerAddress: trackerAddress,
-		Files:          lines[2:],
+		Files:          files,
 		MyIP:           localAddr.IP,
 	}, nil
 }
