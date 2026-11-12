@@ -2,20 +2,20 @@
 package peer
 
 import (
-	"log"
 	"bufio"
+	"crypto/md5"
+	"cs4390/tracker"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
+	"math/rand"
 	"net"
+	"os"
 	"strconv"
 	"strings"
-	"time"
 	"sync"
-	"os"
-	"crypto/md5"
-	"encoding/hex"
-	"cs4390/tracker"
-	"math/rand"
+	"time"
 )
 
 func StartClient(config PeerConfig) error {
@@ -27,7 +27,7 @@ func StartClient(config PeerConfig) error {
 		return err
 	}
 
-	for _, file := range(config.Files) {
+	for _, file := range config.Files {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -57,7 +57,7 @@ func peerFile(config PeerConfig, file string, root *os.Root) error {
 		log.Fatal(err)
 	}
 
-	writer, err := root.OpenFile(file, os.O_WRONLY | os.O_CREATE, 0o644)
+	writer, err := root.OpenFile(file, os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,22 +76,25 @@ func peerFile(config PeerConfig, file string, root *os.Root) error {
 	end := startBlock * 1024
 	updateTracker(config, file, start, end)
 
-	// update tracker every 5 seconds
-	go func() {
-		time.Sleep(5 * time.Second)
-		trackerFile, err = getTracker(config.TrackerAddress, file)
-		if err != nil {
-			panic(err)
-		}
-	}()
+	lastRefresh := time.Now()
 
 	for {
 		if start <= 0 && end >= flen {
 			return nil
 		}
 
+		if time.Since(lastRefresh) >= 5*time.Second {
+			updatedTracker, err := getTracker(config.TrackerAddress, file)
+			if err != nil {
+				fmt.Println("Tracker refresh failed:", err)
+			} else {
+				trackerFile = updatedTracker
+			}
+			lastRefresh = time.Now()
+		}
+
 		var blockStart, blockEnd int64
-		forwards := rand.Int() % 2 == 0
+		forwards := rand.Int()%2 == 0
 
 		if start == 0 {
 			forwards = true
@@ -107,7 +110,7 @@ func peerFile(config PeerConfig, file string, root *os.Root) error {
 		}
 
 		peersWithChunk := make([]string, 0)
-		for _, peer := range(trackerFile.Peers) {
+		for _, peer := range trackerFile.Peers {
 			if peer.Start <= blockStart && peer.End >= blockEnd {
 				peersWithChunk = append(peersWithChunk, fmt.Sprintf("%s:%d", peer.IP, peer.Port))
 			}
@@ -154,7 +157,7 @@ func getTracker(trackerAddr string, file string) (*tracker.Tracker, error) {
 		return nil, fmt.Errorf("GET returned wrong footer")
 	}
 
-	data = data[1:len(data)-1]
+	data = data[1 : len(data)-1]
 	rawFile := strings.Join(data, "\n")
 
 	return tracker.ParseTracker(rawFile)
@@ -194,8 +197,8 @@ func makeTracker(tracker string, file string, root *os.Root, config PeerConfig) 
 
 func updateTracker(config PeerConfig, file string, start, end int64) {
 	request(config.TrackerAddress, []string{"UPDATETRACKER", file,
-			strconv.FormatInt(start, 10), strconv.FormatInt(end, 10),
-			config.MyIP.String(), strconv.Itoa(config.Port)})
+		strconv.FormatInt(start, 10), strconv.FormatInt(end, 10),
+		config.MyIP.String(), strconv.Itoa(config.Port)})
 }
 
 func request(tracker string, request []string) ([]string, error) {
